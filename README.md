@@ -68,3 +68,13 @@ a trusted local OS operator. The MCP facade exposes investigation and proposal
 capabilities but no approve/promote endpoint. API schemas reject caller-supplied
 identity and redact validation errors. End-to-end API/CLI tests verify pending writes,
 exact approved execution, replay prevention, and candidate knowledge promotion.
+
+## Phase 6 — privacy-preserving observability
+
+OpenTelemetry uses independent SDK providers per container and exports local traces
+to stderr. Required counters/histograms are initialized, with injectable exporters
+and metric readers. Actual context, retrieval, skill selection, policy, approval,
+tool, and model operations have spans. Exact action execution shares its approval
+trace. Structured logs contain only operation names, safe outcomes, timing and trace
+IDs. Attribute allowlists and disabled raw exception recording prevent sensitive
+payloads from entering spans. Trace/exporter privacy tests pass.

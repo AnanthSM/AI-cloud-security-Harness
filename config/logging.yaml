@@ -1,4 +1,18 @@
 version: 1
 disable_existing_loggers: false
+formatters:
+  event:
+    format: '%(message)s'
+handlers:
+  stderr:
+    class: logging.StreamHandler
+    stream: ext://sys.stderr
+    formatter: event
+loggers:
+  harness.observability:
+    level: INFO
+    handlers: [stderr]
+    propagate: false
 root:
   level: WARNING
+  handlers: [stderr]

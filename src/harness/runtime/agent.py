@@ -33,10 +33,7 @@ class AgentRuntime:
                 )
             self.memory.append(session_id, principal.user_id, agent.id, "user", request.prompt)
             with self.telemetry.span("context.construction"):
-                with self.telemetry.span("skill.selection"):
-                    agent.skills = list(agent.skills)
-                with self.telemetry.span("knowledge.retrieval"):
-                    context = self.context.build(agent, request, session)
+                context = self.context.build(agent, request, session)
             self.audit.record(
                 AuditEvent(
                     event="agent.started",

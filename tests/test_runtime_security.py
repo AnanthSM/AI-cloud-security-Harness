@@ -7,12 +7,14 @@ from pathlib import Path
 import pytest
 import yaml
 from fastapi.testclient import TestClient
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 import harness.runtime.governance as governance_module
 from harness.api.app import create_app
 from harness.config import Settings
 from harness.errors import Conflict, Forbidden, Invalid, NotFound
 from harness.models.base import ModelResponse, ToolCall
+from harness.observability.telemetry import Telemetry
 from harness.runtime.container import Container
 from harness.schemas import Principal, RunRequest
 from harness.tools.executor import ToolUncertainOutcome
@@ -257,6 +259,25 @@ async def test_queued_approved_write_cannot_dispatch_after_its_deadline(
         await task
     assert gateway.calls == []
     assert container.approvals.get(result.approval_id)["execution_status"] == "FAILED"
+
+
+async def test_approval_execution_span_and_tool_audit_share_the_review_trace(build_container):
+    exporter = InMemorySpanExporter()
+    container = build_container(telemetry=Telemetry(span_exporter=exporter))
+    result, review = await proposal(container)
+    await container.governance.approve(result.approval_id, REVIEWER, review["payload_hash"])
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    approval = spans["approval.review"]
+    execution = spans["tool.execution"]
+    assert execution.parent.span_id == approval.context.span_id
+    assert execution.context.trace_id == approval.context.trace_id
+    events = [
+        event
+        for event in container.audit.list()
+        if event["event"] in {"tool.started", "tool.completed"}
+    ]
+    assert len(events) == 2
+    assert {event["trace_id"] for event in events} == {f"{approval.context.trace_id:032x}"}
 
 
 async def test_queued_read_rechecks_policy_before_dispatch(build_container, monkeypatch):

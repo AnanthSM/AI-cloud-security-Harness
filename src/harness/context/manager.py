@@ -1,4 +1,5 @@
 import json
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 
 from harness.audit.service import redact
@@ -37,7 +38,8 @@ class BuiltContext:
 
 
 class ContextManager:
-    def __init__(self, knowledge, memory, skills, registry, max_chars=24000):
+    def __init__(self, knowledge, memory, skills, registry, max_chars=24000, telemetry=None):
+        self.telemetry = telemetry
         self.knowledge, self.memory = knowledge, memory
         self.skills, self.registry, self.max_chars = skills, registry, max_chars
 
@@ -52,12 +54,13 @@ class ContextManager:
             for t in self.registry.list()
             if t.group in agent.tool_groups or t.name in agent.proposal_tools
         ]
-        active = [self.skills.get(s) for s in agent.skills]
-        for skill in active:
-            for name in skill.tools:
-                tool = self.registry.resolve(name)
-                if tool.group not in agent.tool_groups and name not in agent.proposal_tools:
-                    raise Invalid("Active skill requires an unauthorized capability")
+        with self.telemetry.span("skill.selection") if self.telemetry else nullcontext():
+            active = [self.skills.get(s) for s in agent.skills]
+            for skill in active:
+                for name in skill.tools:
+                    tool = self.registry.resolve(name)
+                    if tool.group not in agent.tool_groups and name not in agent.proposal_tools:
+                        raise Invalid("Active skill requires an unauthorized capability")
         messages = [
             {"role": "system", "kind": "instructions", "content": SYSTEM},
             {
@@ -75,9 +78,10 @@ class ContextManager:
         context = BuiltContext(messages, tools, [], self.max_chars, [s.id for s in active])
         if context.size() > self.max_chars:
             raise Invalid("Request and capability schemas exceed context budget")
-        documents = self.knowledge.retrieve(
-            request.prompt, limit=5, allowed_sources=agent.knowledge_sources
-        )
+        with self.telemetry.span("knowledge.retrieval") if self.telemetry else nullcontext():
+            documents = self.knowledge.retrieve(
+                request.prompt, limit=5, allowed_sources=agent.knowledge_sources
+            )
         for doc in documents:
             entry = {
                 "role": "user",
