@@ -1,0 +1,8 @@
+name: public-ssh-tool-selection
+category: tool_selection
+prompt: Check whether sg-12345 allows SSH from the internet.
+expected:
+  tool: aws.get_security_group
+  policy_decision: ALLOW
+  tool_execution: true
+  status: completed

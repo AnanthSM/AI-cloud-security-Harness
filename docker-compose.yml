@@ -1,0 +1,22 @@
+services:
+  harness:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      HARNESS_OPERATOR_TOKEN: ${HARNESS_OPERATOR_TOKEN:?Set an operator token}
+      HARNESS_REVIEWER_TOKEN: ${HARNESS_REVIEWER_TOKEN:?Set a separate reviewer token}
+      HARNESS_TRACE_CONSOLE: "true"
+    volumes:
+      - harness-state:/app/.state
+      - harness-knowledge:/app/knowledge
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  harness-state:
+  harness-knowledge:

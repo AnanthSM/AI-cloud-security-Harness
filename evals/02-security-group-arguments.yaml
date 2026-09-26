@@ -1,0 +1,9 @@
+name: security-group-exact-arguments
+category: argument_correctness
+prompt: Inspect sg-12345.
+expected:
+  tool: aws.get_security_group
+  arguments:
+    account_id: '111111111111'
+    region: us-east-1
+    security_group_id: sg-12345

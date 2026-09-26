@@ -52,7 +52,9 @@ class RuleConfig(StrictModel):
 
 
 class ApprovalConfig(RuleConfig):
-    reviewer_roles: list[Literal["reviewer"]] = Field(default=["reviewer"], min_length=1, max_length=1)
+    reviewer_roles: list[Literal["reviewer"]] = Field(
+        default=["reviewer"], min_length=1, max_length=1
+    )
 
 
 class PolicyEngine:
@@ -120,6 +122,8 @@ class PolicyEngine:
         )
         if permission == "deny":
             return deny("Agent permission is denied", "AGENT-DENY")
+        if tool.risk == Risk.LOW_RISK_WRITE and agent.default_permissions.low_risk_write == "deny":
+            return deny("Agent prohibits low-risk writes", "AGENT-LOW-RISK-WRITE-DENY")
         try:
             environment, resource = self.resolve_scope(tool, arguments)
         except Forbidden as exc:
@@ -130,9 +134,15 @@ class PolicyEngine:
         order = {Decision.ALLOW: 0, Decision.APPROVAL_REQUIRED: 1, Decision.DENY: 2}
         rule = max(matches, key=lambda r: order[r.decision])
         if rule.decision == Decision.ALLOW and tool.risk != Risk.READ:
-            return PolicyDecision(
-                decision=Decision.APPROVAL_REQUIRED,
-                reason="Agent writes require human approval",
-                policy="AGENT-WRITE-GATE",
+            automatic_low_risk = (
+                tool.risk == Risk.LOW_RISK_WRITE
+                and agent.default_permissions.low_risk_write == "allow"
+                and tool.group in agent.tool_groups
             )
+            if not automatic_low_risk:
+                return PolicyDecision(
+                    decision=Decision.APPROVAL_REQUIRED,
+                    reason="Agent writes require human approval",
+                    policy="AGENT-WRITE-GATE",
+                )
         return PolicyDecision(decision=rule.decision, reason=rule.reason, policy=rule.id)

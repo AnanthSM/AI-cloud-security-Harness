@@ -79,8 +79,11 @@ class ContextManager:
         if context.size() > self.max_chars:
             raise Invalid("Request and capability schemas exceed context budget")
         with self.telemetry.span("knowledge.retrieval") if self.telemetry else nullcontext():
+            query = " ".join(
+                [request.prompt, *(tag for skill in active for tag in skill.required_knowledge)]
+            )
             documents = self.knowledge.retrieve(
-                request.prompt, limit=5, allowed_sources=agent.knowledge_sources
+                query, limit=5, allowed_sources=agent.knowledge_sources
             )
         for doc in documents:
             entry = {

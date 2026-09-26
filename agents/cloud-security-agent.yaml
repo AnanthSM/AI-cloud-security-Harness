@@ -13,4 +13,5 @@ proposal_tools: [aws.modify_security_group, gitlab.create_issue, aws.delete_buck
 default_permissions:
   read: allow
   write: approval_required
+  low_risk_write: approval_required
   destructive: deny

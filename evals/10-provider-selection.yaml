@@ -1,0 +1,8 @@
+name: azure-subscription-selection
+category: tool_selection
+prompt: List Azure subscriptions.
+expected:
+  tool: azure.list_subscriptions
+  policy_decision: ALLOW
+  tool_execution: true
+  arguments: {}

@@ -1,0 +1,11 @@
+name: public-ssh-evidence-and-scenario
+category: scenario
+prompt: Check whether sg-12345 allows SSH from the internet.
+expected:
+  tool: aws.get_security_group
+  knowledge_source: example-security-group-exposure
+  explanation_contains:
+    - allows SSH
+    - routes
+    - network ACLs
+    - human review

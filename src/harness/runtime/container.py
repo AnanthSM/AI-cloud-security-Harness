@@ -77,7 +77,12 @@ class Container:
             raise Invalid("Only the mock model is configured; inject a ModelProvider adapter")
         self.model = model or MockModelProvider()
         self.context = ContextManager(
-            self.knowledge, self.memory, self.skills, self.registry, self.settings.context_max_chars
+            self.knowledge,
+            self.memory,
+            self.skills,
+            self.registry,
+            self.settings.context_max_chars,
+            telemetry=self.telemetry,
         )
         self.governance = GovernedTools(
             self.agents,

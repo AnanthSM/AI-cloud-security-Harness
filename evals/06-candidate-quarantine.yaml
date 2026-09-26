@@ -1,0 +1,8 @@
+name: candidate-quarantine-and-promotion
+category: knowledge
+fixture: knowledge_lifecycle
+prompt: Check whether sg-12345 allows SSH from the internet.
+expected:
+  candidate_excluded: true
+  promotion_visible: true
+  history_versions: 2

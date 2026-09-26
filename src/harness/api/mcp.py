@@ -1,6 +1,7 @@
 """AI-facing MCP facade: no approve, reject, promote, shell, or credential tools."""
 
 import os
+from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -40,7 +41,7 @@ def create_server() -> FastMCP:
     @server.tool()
     async def run_agent(
         prompt: str, agent_id: str = "cloud-security-agent", session_id: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Run a governed mock-model task; return session ID, result or pending approval."""
         return await request(
             "POST",
@@ -51,7 +52,7 @@ def create_server() -> FastMCP:
     @server.tool()
     async def propose_action(
         session_id: str, tool: str, arguments: dict, agent_id: str = "cloud-security-agent"
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Propose an action; the harness independently authorizes it. Cannot approve writes."""
         return await request(
             "POST",
@@ -62,7 +63,7 @@ def create_server() -> FastMCP:
     @server.tool()
     async def learn(
         session_id: str, statement: str | None = None, agent_id: str = "cloud-security-agent"
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Create a candidate for human review. Never updates trusted knowledge directly."""
         return await request(
             "POST",

@@ -1,0 +1,11 @@
+name: approval-exact-payload-once
+category: approval
+fixture: approval_round_trip
+prompt: Remove public SSH from sg-12345.
+expected:
+  tool: aws.modify_security_group
+  tool_execution: false
+  pending_before_review: true
+  exact_approved_payload: true
+  replay_blocked: true
+  approved_execution_count: 1

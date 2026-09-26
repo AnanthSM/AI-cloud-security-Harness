@@ -32,6 +32,11 @@ WRITE_ARGS = {
 }
 OPERATOR_TOKEN = "operator-" + "a" * 40
 REVIEWER_TOKEN = "reviewer-" + "b" * 40
+ISSUE_ARGS = {
+    "project_id": 42,
+    "title": "Investigate public SSH",
+    "description": "Track the reviewed exposure investigation",
+}
 
 
 @pytest.fixture
@@ -64,6 +69,114 @@ async def proposal(container, *, user=OPERATOR, arguments=None):
         user, AGENT, session_id, "aws.modify_security_group", arguments or copy.deepcopy(WRITE_ARGS)
     )
     return result, container.approvals.get(result.approval_id)
+
+
+def configure_automatic_issue_creation(container, *, group=True, allow_policy=True):
+    root = container.settings.root
+    path = root / "agents/cloud-security-agent.yaml"
+    agent = yaml.safe_load(path.read_text())
+    agent["default_permissions"]["low_risk_write"] = "allow"
+    if group:
+        agent["tool_groups"].append("gitlab.write")
+    path.write_text(yaml.safe_dump(agent))
+    if allow_policy:
+        (root / "policies/tool-access.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "rules": [
+                        {
+                            "id": "REVIEWED-ISSUE-AUTOMATION",
+                            "risks": ["LOW_RISK_WRITE"],
+                            "tools": ["gitlab.create_issue"],
+                            "decision": "ALLOW",
+                            "reason": "Explicitly allow reviewed issue automation",
+                        }
+                    ]
+                }
+            )
+        )
+        (root / "policies/approvals.yaml").write_text("rules: []\n")
+
+
+async def test_explicitly_opted_in_low_risk_write_executes_without_approval(build_container):
+    gateway = InProcessMockGateway()
+    container = build_container(gateway=gateway)
+    configure_automatic_issue_creation(container)
+    session_id = container.memory.create(OPERATOR.user_id, AGENT)
+    result = await container.governance.propose(
+        OPERATOR, AGENT, session_id, "gitlab.create_issue", ISSUE_ARGS
+    )
+    assert result.status == "completed"
+    assert result.policy_decision == "ALLOW"
+    assert result.approval_id is None
+    assert gateway.calls == [("gitlab.create_issue", ISSUE_ARGS)]
+    assert container.approvals.list() == []
+    assert any(event["event"] == "tool.completed" for event in container.audit.list())
+
+
+@pytest.mark.parametrize("group,allow_policy", [(False, True), (True, False)])
+async def test_low_risk_proposal_only_or_production_policy_still_requires_review(
+    build_container, group, allow_policy
+):
+    gateway = InProcessMockGateway()
+    container = build_container(gateway=gateway)
+    configure_automatic_issue_creation(container, group=group, allow_policy=allow_policy)
+    session_id = container.memory.create(OPERATOR.user_id, AGENT)
+    result = await container.governance.propose(
+        OPERATOR, AGENT, session_id, "gitlab.create_issue", ISSUE_ARGS
+    )
+    assert result.status == "approval_required"
+    assert gateway.calls == []
+    assert len(container.approvals.list()) == 1
+
+
+async def test_automatic_low_risk_writes_never_retry_uncertain_outcomes(build_container):
+    class UncertainIssue(InProcessMockGateway):
+        async def call(self, tool, arguments):
+            await super().call(tool, arguments)
+            raise TimeoutError("Issue may already exist")
+
+    gateway = UncertainIssue()
+    container = build_container(gateway=gateway)
+    configure_automatic_issue_creation(container)
+    session_id = container.memory.create(OPERATOR.user_id, AGENT)
+    with pytest.raises(ToolUncertainOutcome):
+        await container.governance.propose(
+            OPERATOR, AGENT, session_id, "gitlab.create_issue", ISSUE_ARGS
+        )
+    assert gateway.calls == [("gitlab.create_issue", ISSUE_ARGS)]
+    assert any(event["execution_result"] == "UNKNOWN" for event in container.audit.list())
+
+
+async def test_queued_low_risk_write_rechecks_revoked_opt_in(build_container, monkeypatch):
+    gateway = InProcessMockGateway()
+    container = build_container(gateway=gateway)
+    configure_automatic_issue_creation(container)
+    session_id = container.memory.create(OPERATOR.user_id, AGENT)
+    container.executor._semaphore = asyncio.Semaphore(1)
+    await container.executor._semaphore.acquire()
+    started = asyncio.Event()
+    original_record = container.audit.record
+
+    def signal_started(event, session=None):
+        value = original_record(event, session)
+        if event.event == "tool.started":
+            started.set()
+        return value
+
+    monkeypatch.setattr(container.audit, "record", signal_started)
+    task = asyncio.create_task(
+        container.governance.propose(OPERATOR, AGENT, session_id, "gitlab.create_issue", ISSUE_ARGS)
+    )
+    await asyncio.wait_for(started.wait(), timeout=5)
+    path = container.settings.root / "agents/cloud-security-agent.yaml"
+    agent = yaml.safe_load(path.read_text())
+    agent["default_permissions"]["low_risk_write"] = "approval_required"
+    path.write_text(yaml.safe_dump(agent))
+    container.executor._semaphore.release()
+    with pytest.raises(Forbidden, match="Current policy"):
+        await task
+    assert gateway.calls == []
 
 
 class InjectedGateway(InProcessMockGateway):
@@ -566,3 +679,29 @@ def test_model_failure_and_invalid_output_are_sanitized(build_container, malform
     assert response.status_code == 422
     assert "private-provider-details" not in response.text
     assert "private-provider-details" not in str(container.audit.list())
+
+
+async def test_read_runtime_traces_real_context_retrieval_and_skill_operations(build_container):
+    exporter = InMemorySpanExporter()
+    container = build_container(telemetry=Telemetry(span_exporter=exporter))
+    result = await container.runtime.run(
+        RunRequest(prompt="Check public SSH for sg-12345"), OPERATOR
+    )
+    assert result.status == "completed"
+    spans = exporter.get_finished_spans()
+    assert {
+        "agent.request",
+        "context.construction",
+        "skill.selection",
+        "knowledge.retrieval",
+        "policy.evaluation",
+        "tool.execution",
+        "model.request",
+        "model.response",
+    } <= {s.name for s in spans}
+    assert len({s.context.trace_id for s in spans}) == 1
+    context_span = next(s for s in spans if s.name == "context.construction")
+    for name in ("skill.selection", "knowledge.retrieval"):
+        assert (
+            next(s for s in spans if s.name == name).parent.span_id == context_span.context.span_id
+        )

@@ -11,6 +11,7 @@ from harness.schemas import StrictModel
 class Permissions(StrictModel):
     read: Literal["allow", "deny"] = "allow"
     write: Literal["approval_required", "deny"] = "approval_required"
+    low_risk_write: Literal["allow", "approval_required", "deny"] = "approval_required"
     destructive: Literal["deny"] = "deny"
 
 

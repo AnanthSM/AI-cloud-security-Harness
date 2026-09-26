@@ -134,8 +134,8 @@ class GovernedTools:
                 data={"approval": approval},
             )
         # A defense in depth invariant independent of prompt/model cooperation.
-        if tool.risk != Risk.READ:
-            raise Forbidden("Writes cannot execute without an approval claim")
+        if tool.risk not in {Risk.READ, Risk.LOW_RISK_WRITE}:
+            raise Forbidden("Consequential writes cannot execute without an approval claim")
 
         def validate_dispatch():
             self.memory.get(session_id, user.user_id, agent_id)
@@ -147,7 +147,10 @@ class GovernedTools:
             current = self.policy.evaluate(
                 user=user, agent=current_agent, tool=current_tool, arguments=args
             )
-            if current.decision != Decision.ALLOW or current_tool.risk != Risk.READ:
+            if current.decision != Decision.ALLOW or current_tool.risk not in {
+                Risk.READ,
+                Risk.LOW_RISK_WRITE,
+            }:
                 self.telemetry.count("policy_denials_total")
                 self.audit.record(
                     event.model_copy(
@@ -157,7 +160,7 @@ class GovernedTools:
                         }
                     )
                 )
-                raise Forbidden("Current policy does not allow this read action")
+                raise Forbidden("Current policy does not allow this action without approval")
 
         result = await self._execute(name, args, event, before_dispatch=validate_dispatch)
         return RunResult(

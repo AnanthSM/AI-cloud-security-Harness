@@ -17,6 +17,7 @@ from harness.db import Database
 from harness.errors import Conflict, Forbidden, Invalid
 from harness.policies.engine import PolicyEngine
 from harness.schemas import Decision, Principal, Risk, ToolDefinition
+from harness.tools.catalog import create_registry
 from harness.util import canonical, digest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,6 +94,101 @@ def test_policy_read_allowed_and_production_write_requires_approval(policy_direc
     assert evaluate(policy_directory).decision == Decision.ALLOW
     result = evaluate(
         policy_directory, definition=tool(Risk.HIGH_RISK_WRITE, "aws.modify_security_group")
+    )
+    assert result.decision == Decision.APPROVAL_REQUIRED
+
+
+@pytest.mark.parametrize(
+    "group,permission,write_permission,expected",
+    [
+        (True, "allow", "approval_required", Decision.ALLOW),
+        (False, "allow", "approval_required", Decision.APPROVAL_REQUIRED),
+        (True, "approval_required", "approval_required", Decision.APPROVAL_REQUIRED),
+        (True, "deny", "approval_required", Decision.DENY),
+        (True, "allow", "deny", Decision.DENY),
+    ],
+)
+def test_low_risk_auto_execution_requires_explicit_capability_permission_and_policy(
+    policy_directory, group, permission, write_permission, expected
+):
+    (policy_directory / "tool-access.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "rules": [
+                    {
+                        "id": "EXPLICIT-ISSUE-ALLOW",
+                        "risks": ["LOW_RISK_WRITE"],
+                        "decision": "ALLOW",
+                        "tools": ["gitlab.create_issue"],
+                        "reason": "Reviewed automatic issue creation",
+                    }
+                ]
+            }
+        )
+    )
+    (policy_directory / "approvals.yaml").write_text("rules: []\n")
+    agent = AgentLoader(ROOT / "agents").get("cloud-security-agent")
+    agent.default_permissions.low_risk_write = permission
+    agent.default_permissions.write = write_permission
+    if group:
+        agent.tool_groups.append("gitlab.write")
+    result = evaluate(
+        policy_directory,
+        agent=agent,
+        definition=create_registry().resolve("gitlab.create_issue"),
+        arguments={"project_id": 42, "title": "Investigation", "description": "Track remediation"},
+    )
+    assert result.decision == expected
+
+
+def test_low_risk_opt_in_cannot_override_a_matching_production_approval_rule(policy_directory):
+    agent = AgentLoader(ROOT / "agents").get("cloud-security-agent")
+    agent.tool_groups.append("gitlab.write")
+    agent.default_permissions.low_risk_write = "allow"
+    path = policy_directory / "tool-access.yaml"
+    rules = yaml.safe_load(path.read_text())
+    rules["rules"].append(
+        {
+            "id": "SPECIFIC-ISSUE-ALLOW",
+            "risks": ["LOW_RISK_WRITE"],
+            "tools": ["gitlab.create_issue"],
+            "decision": "ALLOW",
+            "reason": "Optional opt-in",
+        }
+    )
+    path.write_text(yaml.safe_dump(rules))
+    result = evaluate(
+        policy_directory,
+        agent=agent,
+        definition=create_registry().resolve("gitlab.create_issue"),
+        arguments={"project_id": 42, "title": "Investigation", "description": "Track remediation"},
+    )
+    assert result.decision == Decision.APPROVAL_REQUIRED
+
+
+def test_low_risk_opt_in_cannot_downgrade_a_high_risk_tool(policy_directory):
+    (policy_directory / "tool-access.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "rules": [
+                    {
+                        "id": "HIGH-WRITE-ALLOW",
+                        "risks": ["HIGH_RISK_WRITE"],
+                        "decision": "ALLOW",
+                        "reason": "The high-risk approval floor must still apply",
+                    }
+                ]
+            }
+        )
+    )
+    (policy_directory / "approvals.yaml").write_text("rules: []\n")
+    agent = AgentLoader(ROOT / "agents").get("cloud-security-agent")
+    agent.tool_groups.append("aws.write")
+    agent.default_permissions.low_risk_write = "allow"
+    result = evaluate(
+        policy_directory,
+        agent=agent,
+        definition=tool(Risk.HIGH_RISK_WRITE, "aws.modify_security_group"),
     )
     assert result.decision == Decision.APPROVAL_REQUIRED
 
