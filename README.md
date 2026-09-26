@@ -43,3 +43,13 @@ triggers prevent payload changes and audit update/delete through normal DB acces
 Audit events contain hashes and outcome codes, never raw tool arguments or outputs.
 The hash chain detects modification; DB-owner tamper resistance requires an external
 append-only destination in production. Validation: 33 security tests pass.
+
+## Phase 4 — reviewed knowledge and separate memory
+
+Session memory is bounded, owned by a user/agent, and expires. `/learn` copies
+investigation evidence into an unverified candidate; normal retrieval excludes
+candidates. Human promotion checks the exact candidate hash and version and writes
+a new immutable knowledge revision with provenance. Modification creates another
+candidate version and invalidates stale reviews. SQL is authoritative; Markdown
+exports preserve human-readable versions. The supplied scenario is explicitly a
+mock fixture, not organizational policy. Validation: 14 knowledge/memory tests pass.
