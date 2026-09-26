@@ -1,0 +1,7 @@
+reviewer_roles: [reviewer]
+rules:
+  - id: PROD-WRITE-001
+    environments: [production]
+    risks: [LOW_RISK_WRITE, HIGH_RISK_WRITE]
+    decision: APPROVAL_REQUIRED
+    reason: Production write operation requires explicit approval

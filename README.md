@@ -31,3 +31,15 @@ run with `python -m mcp_servers.mock_aws` (or `mock_azure`, `mock_gitlab`).
 The executor validates both directions, limits concurrency/rate, bounds read retries,
 and never retries writes. Mock security group changes use revision preconditions.
 Validation: 39 tool/MCP tests pass, including real stdio round trips.
+
+## Phase 3 — security control plane
+
+Policies load from strict YAML and use deny-overrides evaluation. Environment is
+resolved from trusted account/subscription/project inventory, never model text.
+Unknown scope or missing grants deny execution. Approval records bind normalized
+arguments and control-plane revisions, expire, and can be claimed once. The review
+digest must match; the executed payload comes from the stored record. SQLite
+triggers prevent payload changes and audit update/delete through normal DB access.
+Audit events contain hashes and outcome codes, never raw tool arguments or outputs.
+The hash chain detects modification; DB-owner tamper resistance requires an external
+append-only destination in production. Validation: 33 security tests pass.

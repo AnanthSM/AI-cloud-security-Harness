@@ -1,0 +1,16 @@
+# Trusted control-plane inventory, never supplied by a model or tool result.
+scopes:
+  aws:
+    scope_field: account_id
+    environments:
+      '111111111111': production
+  azure:
+    scope_field: subscription_id
+    environments:
+      sub-production-001: production
+  gitlab:
+    scope_field: project_id
+    environments:
+      '42': production
+    # Metadata-only list tools do not act on a cloud resource.
+catalog_tools: [aws.list_accounts, azure.list_subscriptions]

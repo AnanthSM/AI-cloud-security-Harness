@@ -1,0 +1,13 @@
+rules:
+  - id: READ-001
+    risks: [READ]
+    decision: ALLOW
+    reason: Explicit read capability for the registered agent
+  - id: WRITE-001
+    risks: [LOW_RISK_WRITE, HIGH_RISK_WRITE]
+    decision: APPROVAL_REQUIRED
+    reason: Human review required for a write operation
+  - id: DESTRUCTIVE-001
+    risks: [DESTRUCTIVE]
+    decision: DENY
+    reason: Destructive operations are disabled
