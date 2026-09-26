@@ -53,3 +53,18 @@ a new immutable knowledge revision with provenance. Modification creates another
 candidate version and invalidates stale reviews. SQL is authoritative; Markdown
 exports preserve human-readable versions. The supplied scenario is explicitly a
 mock fixture, not organizational policy. Validation: 14 knowledge/memory tests pass.
+
+## Phase 5 — governed agent runtime and interfaces
+
+The bounded provider-neutral loop builds context from selected skills, retrieved
+reviewed documents, and isolated session state. A deterministic mock model
+supports the SSH investigation/remediation demos; actual model providers implement
+the `ModelProvider` port. Every proposal passes through `GovernedTools`, including
+external-client proposals. Configuration and resource revisions are rechecked at
+execution; queued actions recheck authorization before dispatch.
+
+REST endpoints require separate operator and reviewer tokens. CLI commands assume
+a trusted local OS operator. The MCP facade exposes investigation and proposal
+capabilities but no approve/promote endpoint. API schemas reject caller-supplied
+identity and redact validation errors. End-to-end API/CLI tests verify pending writes,
+exact approved execution, replay prevention, and candidate knowledge promotion.

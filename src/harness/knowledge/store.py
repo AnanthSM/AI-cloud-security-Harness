@@ -3,6 +3,7 @@
 SQL records are authoritative. Markdown exports are immutable review artifacts;
 editing a file never replaces an existing database version.
 """
+
 import json
 import math
 import re
@@ -62,7 +63,11 @@ class KnowledgeStore:
         if db.engine.dialect.name == "sqlite":
             with db.engine.begin() as conn:
                 for action in ["UPDATE", "DELETE"]:
-                    conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS knowledge_no_{action.lower()} BEFORE {action} ON knowledge_versions BEGIN SELECT RAISE(ABORT, 'knowledge versions are immutable'); END"))
+                    conn.execute(
+                        text(
+                            f"CREATE TRIGGER IF NOT EXISTS knowledge_no_{action.lower()} BEFORE {action} ON knowledge_versions BEGIN SELECT RAISE(ABORT, 'knowledge versions are immutable'); END"
+                        )
+                    )
         self.import_documents()
 
     def _folder(self, folder: str) -> Path:
@@ -76,9 +81,13 @@ class KnowledgeStore:
     @staticmethod
     def _view(row: KnowledgeRow) -> dict:
         data = json.loads(row.payload)
-        return {**data, "source": f"knowledge/{row.source}",
-                "content": data["statement"], "payload_hash": row.payload_hash,
-                "trusted": data["status"] == "approved" and row.source in TRUSTED}
+        return {
+            **data,
+            "source": f"knowledge/{row.source}",
+            "content": data["statement"],
+            "payload_hash": row.payload_hash,
+            "trusted": data["status"] == "approved" and row.source in TRUSTED,
+        }
 
     @staticmethod
     def _validate(data: dict) -> KnowledgeEntry:
@@ -88,7 +97,9 @@ class KnowledgeStore:
             raise Invalid("Knowledge metadata or content is invalid") from None
         clean = entry.model_dump(mode="json")
         if sanitize(clean) != clean:
-            raise Invalid("Knowledge contains sensitive information; remove secrets before proposing it")
+            raise Invalid(
+                "Knowledge contains sensitive information; remove secrets before proposing it"
+            )
         if len(canonical(clean)) > 40000:
             raise Invalid("Knowledge entry exceeds the storage limit")
         return entry
@@ -98,41 +109,72 @@ class KnowledgeStore:
             unit.execute(text("BEGIN IMMEDIATE"))
 
     def _head(self, unit, knowledge_id: str) -> KnowledgeRow:
-        head = unit.scalar(select(KnowledgeHead).where(
-            KnowledgeHead.id == knowledge_id).with_for_update())
+        head = unit.scalar(
+            select(KnowledgeHead).where(KnowledgeHead.id == knowledge_id).with_for_update()
+        )
         if not head:
             raise NotFound("Knowledge entry not found")
         return unit.get(KnowledgeRow, (knowledge_id, head.version))
 
-    def _append(self, unit, entry: KnowledgeEntry, source: str,
-                operation: str, actor: str) -> KnowledgeRow:
+    def _append(
+        self, unit, entry: KnowledgeEntry, source: str, operation: str, actor: str
+    ) -> KnowledgeRow:
         payload = entry.model_dump(mode="json")
-        row = KnowledgeRow(id=entry.id, version=entry.version, payload=canonical(payload),
-                           payload_hash=digest(payload), source=source)
+        row = KnowledgeRow(
+            id=entry.id,
+            version=entry.version,
+            payload=canonical(payload),
+            payload_hash=digest(payload),
+            source=source,
+        )
         unit.add(row)
         head = unit.get(KnowledgeHead, entry.id)
         if head:
             head.version = entry.version
         else:
             unit.add(KnowledgeHead(id=entry.id, version=entry.version))
-        self.audit.record(AuditEvent(event=operation, user_id=actor,
-            session_id=entry.session_id, arguments_hash=row.payload_hash,
-            knowledge_sources=[f"knowledge/{source}/{entry.id}@{entry.version}"],
-            execution_result=entry.status.upper()), unit)
+        self.audit.record(
+            AuditEvent(
+                event=operation,
+                user_id=actor,
+                session_id=entry.session_id,
+                arguments_hash=row.payload_hash,
+                knowledge_sources=[f"knowledge/{source}/{entry.id}@{entry.version}"],
+                execution_result=entry.status.upper(),
+            ),
+            unit,
+        )
         return row
 
-    def propose(self, title: str, statement: str, scope: dict, sources: list,
-                tags: list[str], user_id: str, session_id: str = "",
-                target_id: str | None = None) -> dict:
+    def propose(
+        self,
+        title: str,
+        statement: str,
+        scope: dict,
+        sources: list,
+        tags: list[str],
+        user_id: str,
+        session_id: str = "",
+        target_id: str | None = None,
+    ) -> dict:
         now = utcnow()
         with self.db.sessions() as unit:
             self._begin(unit)
             previous = self._head(unit, target_id) if target_id else None
-            data = {"id": target_id or "candidate-" + uuid4().hex[:20], "title": title,
-                    "version": previous.version + 1 if previous else 1,
-                    "statement": statement, "scope": scope, "sources": sources,
-                    "tags": tags, "created_at": now.isoformat(), "updated_at": now.isoformat(),
-                    "status": "candidate", "created_by": user_id, "session_id": session_id}
+            data = {
+                "id": target_id or "candidate-" + uuid4().hex[:20],
+                "title": title,
+                "version": previous.version + 1 if previous else 1,
+                "statement": statement,
+                "scope": scope,
+                "sources": sources,
+                "tags": tags,
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+                "status": "candidate",
+                "created_by": user_id,
+                "session_id": session_id,
+            }
             if previous:
                 old = json.loads(previous.payload)
                 if old["status"] == "candidate":
@@ -147,8 +189,13 @@ class KnowledgeStore:
 
     def list_candidates(self) -> list[dict]:
         with self.db.sessions() as unit:
-            rows = unit.scalars(select(KnowledgeRow).join(KnowledgeHead,
-                (KnowledgeHead.id == KnowledgeRow.id) & (KnowledgeHead.version == KnowledgeRow.version)))
+            rows = unit.scalars(
+                select(KnowledgeRow).join(
+                    KnowledgeHead,
+                    (KnowledgeHead.id == KnowledgeRow.id)
+                    & (KnowledgeHead.version == KnowledgeRow.version),
+                )
+            )
             return [self._view(r) for r in rows if json.loads(r.payload)["status"] == "candidate"]
 
     def get_candidate(self, knowledge_id: str) -> dict:
@@ -160,11 +207,22 @@ class KnowledgeStore:
 
     def history(self, knowledge_id: str) -> list[dict]:
         with self.db.sessions() as unit:
-            return [self._view(r) for r in unit.scalars(select(KnowledgeRow).where(
-                KnowledgeRow.id == knowledge_id).order_by(KnowledgeRow.version))]
+            return [
+                self._view(r)
+                for r in unit.scalars(
+                    select(KnowledgeRow)
+                    .where(KnowledgeRow.id == knowledge_id)
+                    .order_by(KnowledgeRow.version)
+                )
+            ]
 
-    def modify(self, knowledge_id: str, expected_version: int, changes: dict,
-               reviewer: Principal | None = None) -> dict:
+    def modify(
+        self,
+        knowledge_id: str,
+        expected_version: int,
+        changes: dict,
+        reviewer: Principal | None = None,
+    ) -> dict:
         allowed = {"title", "statement", "scope", "sources", "tags", "confidence"}
         if not changes or not set(changes) <= allowed:
             raise Invalid("Only candidate content and provenance may be modified")
@@ -178,7 +236,9 @@ class KnowledgeStore:
             data.update(version=row.version + 1, updated_at=utcnow().isoformat())
             actor = reviewer.user_id if reviewer else data["created_by"]
             entry = self._validate(data)
-            result = self._view(self._append(unit, entry, "candidates", "knowledge.modified", actor))
+            result = self._view(
+                self._append(unit, entry, "candidates", "knowledge.modified", actor)
+            )
             unit.commit()
         self.export(result)
         return result
@@ -188,24 +248,39 @@ class KnowledgeStore:
         if reviewer.role != "reviewer":
             raise Forbidden("Knowledge review requires a human reviewer credential")
 
-    def promote(self, knowledge_id: str, expected_version: int,
-                expected_hash: str, reviewer: Principal) -> dict:
+    def promote(
+        self, knowledge_id: str, expected_version: int, expected_hash: str, reviewer: Principal
+    ) -> dict:
         self._reviewer(reviewer)
         with self.db.sessions() as unit:
             self._begin(unit)
             row = self._head(unit, knowledge_id)
             data = json.loads(row.payload)
-            if (row.version != expected_version or row.payload_hash != expected_hash
-                    or digest(data) != row.payload_hash or data["status"] != "candidate"):
+            if (
+                row.version != expected_version
+                or row.payload_hash != expected_hash
+                or digest(data) != row.payload_hash
+                or data["status"] != "candidate"
+            ):
                 raise Conflict("Candidate changed after review or is no longer pending")
             now = utcnow().isoformat()
-            data.update(version=row.version + 1, status="approved", updated_at=now,
-                        reviewed_at=now, reviewed_by=reviewer.user_id)
+            data.update(
+                version=row.version + 1,
+                status="approved",
+                updated_at=now,
+                reviewed_at=now,
+                reviewed_by=reviewer.user_id,
+            )
             entry = self._validate(data)
-            previous = unit.scalars(select(KnowledgeRow).where(
-                KnowledgeRow.id == knowledge_id).order_by(KnowledgeRow.version.desc())).all()
+            previous = unit.scalars(
+                select(KnowledgeRow)
+                .where(KnowledgeRow.id == knowledge_id)
+                .order_by(KnowledgeRow.version.desc())
+            ).all()
             source = next((r.source for r in previous if r.source in TRUSTED), "approved")
-            result = self._view(self._append(unit, entry, source, "knowledge.promoted", reviewer.user_id))
+            result = self._view(
+                self._append(unit, entry, source, "knowledge.promoted", reviewer.user_id)
+            )
             unit.commit()
         self.export(result)
         return result
@@ -219,10 +294,17 @@ class KnowledgeStore:
             if data["status"] != "candidate":
                 raise Conflict("Knowledge entry is no longer pending")
             now = utcnow().isoformat()
-            data.update(version=row.version + 1, status="rejected", updated_at=now,
-                        reviewed_at=now, reviewed_by=reviewer.user_id)
+            data.update(
+                version=row.version + 1,
+                status="rejected",
+                updated_at=now,
+                reviewed_at=now,
+                reviewed_by=reviewer.user_id,
+            )
             entry = self._validate(data)
-            result = self._view(self._append(unit, entry, "candidates", "knowledge.rejected", reviewer.user_id))
+            result = self._view(
+                self._append(unit, entry, "candidates", "knowledge.rejected", reviewer.user_id)
+            )
             unit.commit()
         self.export(result)
         return result
@@ -269,31 +351,47 @@ class KnowledgeStore:
                 if not isinstance(metadata, dict) or "statement" in metadata:
                     raise Invalid("Knowledge frontmatter is invalid")
                 entry = self._validate({**metadata, "statement": parts[2].strip()})
-                if ((folder in TRUSTED and entry.status != "approved")
-                        or (folder == "candidates" and entry.status == "approved")):
+                if (folder in TRUSTED and entry.status != "approved") or (
+                    folder == "candidates" and entry.status == "approved"
+                ):
                     raise Invalid("Knowledge source folder and review status disagree")
                 with self.db.sessions() as unit:
                     self._begin(unit)
                     existing = unit.get(KnowledgeRow, (entry.id, entry.version))
                     if existing:
-                        if existing.payload_hash != digest(entry.model_dump(mode="json")) or existing.source != folder:
-                            raise Conflict("Imported knowledge conflicts with an immutable stored revision")
+                        if (
+                            existing.payload_hash != digest(entry.model_dump(mode="json"))
+                            or existing.source != folder
+                        ):
+                            raise Conflict(
+                                "Imported knowledge conflicts with an immutable stored revision"
+                            )
                         continue
                     head = unit.get(KnowledgeHead, entry.id)
                     if head:
                         # Changes to an existing identity go through propose/modify/review.
-                        raise Conflict("New versions of existing knowledge require the review workflow")
+                        raise Conflict(
+                            "New versions of existing knowledge require the review workflow"
+                        )
                     self._append(unit, entry, folder, "knowledge.imported", "local-config")
                     unit.commit()
                     count += 1
         return count
 
-    def retrieve(self, query: str, include_candidates: bool = False, limit: int = 5,
-                 allowed_sources: list[str] | None = None) -> list[dict]:
+    def retrieve(
+        self,
+        query: str,
+        include_candidates: bool = False,
+        limit: int = 5,
+        allowed_sources: list[str] | None = None,
+    ) -> list[dict]:
         if not 1 <= limit <= 50:
             raise Invalid("Retrieval limit must be between 1 and 50")
-        allowed = set(FOLDERS if allowed_sources is None else
-                      [s.removeprefix("knowledge/").rstrip("/") for s in allowed_sources])
+        allowed = set(
+            FOLDERS
+            if allowed_sources is None
+            else [s.removeprefix("knowledge/").rstrip("/") for s in allowed_sources]
+        )
         if not allowed <= FOLDERS:
             raise Invalid("Retrieval source is not an allowed knowledge folder")
         with self.db.sessions() as unit:
@@ -307,14 +405,21 @@ class KnowledgeStore:
                 heads = {h.id: h.version for h in unit.scalars(select(KnowledgeHead))}
                 for row in rows:
                     item = self._view(row)
-                    if (row.source in allowed and heads[row.id] == row.version
-                            and item["status"] == "candidate"):
+                    if (
+                        row.source in allowed
+                        and heads[row.id] == row.version
+                        and item["status"] == "candidate"
+                    ):
                         latest[(row.id, "candidate")] = item
         items = list(latest.values())
+
         def words(value: str) -> list[str]:
             return re.findall(r"[a-z0-9]+", value.lower())
+
         terms = set(words(query))
-        documents = [words(i["title"] + " " + i["content"] + " " + " ".join(i["tags"])) for i in items]
+        documents = [
+            words(i["title"] + " " + i["content"] + " " + " ".join(i["tags"])) for i in items
+        ]
         average = sum(map(len, documents)) / max(len(documents), 1)
         scored = []
         for item, tokens in zip(items, documents):
@@ -324,11 +429,21 @@ class KnowledgeStore:
                 if frequency:
                     df = sum(term in doc for doc in documents)
                     inverse = math.log(1 + (len(items) - df + 0.5) / (df + 0.5))
-                    score += inverse * frequency * 2.2 / (frequency + 1.2 * (0.25 + 0.75 * len(tokens) / max(average, 1)))
+                    score += (
+                        inverse
+                        * frequency
+                        * 2.2
+                        / (frequency + 1.2 * (0.25 + 0.75 * len(tokens) / max(average, 1)))
+                    )
             if score > 0:
                 scored.append({**item, "score": round(score, 6)})
         scored.sort(key=lambda i: (-i["score"], i["id"], -i["version"]))
         result = scored[:limit]
-        self.audit.record(AuditEvent(event="knowledge.retrieved", knowledge_sources=[
-            f"{i['source']}/{i['id']}@{i['version']}" for i in result], execution_result="SUCCEEDED"))
+        self.audit.record(
+            AuditEvent(
+                event="knowledge.retrieved",
+                knowledge_sources=[f"{i['source']}/{i['id']}@{i['version']}" for i in result],
+                execution_result="SUCCEEDED",
+            )
+        )
         return result

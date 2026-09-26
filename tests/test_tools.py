@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from harness.errors import Conflict, Invalid
+from harness.errors import Conflict, Forbidden, Invalid
 from harness.schemas import Risk
 from harness.tools.catalog import create_registry
 from harness.tools.executor import (
@@ -16,16 +16,30 @@ from harness.tools.executor import (
 from harness.tools.gateway import InProcessMockGateway
 
 SG_ARGS = {"account_id": "111111111111", "region": "us-east-1", "security_group_id": "sg-12345"}
-WRITE_ARGS = {**SG_ARGS, "expected_revision": 1,
-              "remove_rule": {"cidr": "0.0.0.0/0", "from_port": 22, "to_port": 22, "protocol": "tcp"}}
+WRITE_ARGS = {
+    **SG_ARGS,
+    "expected_revision": 1,
+    "remove_rule": {"cidr": "0.0.0.0/0", "from_port": 22, "to_port": 22, "protocol": "tcp"},
+}
 
 
 def args_for(tool):
-    values = {**WRITE_ARGS, "bucket_name": "payroll-data", "instance_id": "i-0123456789abcdef0",
-              "resource_id": "sg-12345", "subscription_id": "11111111-2222-3333-4444-555555555555",
-              "resource_group": "production", "vm_name": "web-01", "account_name": "securedata",
-              "nsg_name": "web-nsg", "project_id": 42, "pipeline_id": 10, "merge_request_iid": 1,
-              "title": "Remediate public SSH", "description": "Remove public SSH ingress after review"}
+    values = {
+        **WRITE_ARGS,
+        "bucket_name": "payroll-data",
+        "instance_id": "i-0123456789abcdef0",
+        "resource_id": "sg-12345",
+        "subscription_id": "11111111-2222-3333-4444-555555555555",
+        "resource_group": "production",
+        "vm_name": "web-01",
+        "account_name": "securedata",
+        "nsg_name": "web-nsg",
+        "project_id": 42,
+        "pipeline_id": 10,
+        "merge_request_iid": 1,
+        "title": "Remediate public SSH",
+        "description": "Remove public SSH ingress after review",
+    }
     return {key: values[key] for key in tool.input_schema["required"]}
 
 
@@ -47,10 +61,15 @@ def test_catalog_is_explicit_and_risk_cannot_change_via_resolved_copy():
     assert registry.resolve(tool.name).input_schema["properties"]
 
 
-@pytest.mark.parametrize("arguments", [
-    {**SG_ARGS, "override_policy": True}, {**SG_ARGS, "account_id": 111111111111},
-    {**SG_ARGS, "security_group_id": None}, {"account_id": "111111111111"},
-])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {**SG_ARGS, "override_policy": True},
+        {**SG_ARGS, "account_id": 111111111111},
+        {**SG_ARGS, "security_group_id": None},
+        {"account_id": "111111111111"},
+    ],
+)
 async def test_invalid_input_never_reaches_gateway(arguments):
     gateway = InProcessMockGateway()
     executor = ToolExecutor(create_registry(), gateway)
@@ -95,15 +114,23 @@ async def test_only_transient_read_failures_are_retried():
             return await super().call(tool, arguments)
 
     gateway = Flaky()
-    result = await ToolExecutor(create_registry(), gateway).execute("aws.get_security_group", SG_ARGS)
+    result = await ToolExecutor(create_registry(), gateway).execute(
+        "aws.get_security_group", SG_ARGS
+    )
     assert result["revision"] == 1
     assert gateway.attempts == 3
 
 
-@pytest.mark.parametrize("name,arguments", [
-    ("aws.modify_security_group", WRITE_ARGS),
-    ("aws.delete_bucket", {"account_id": "111111111111", "region": "us-east-1", "bucket_name": "payroll-data"}),
-])
+@pytest.mark.parametrize(
+    "name,arguments",
+    [
+        ("aws.modify_security_group", WRITE_ARGS),
+        (
+            "aws.delete_bucket",
+            {"account_id": "111111111111", "region": "us-east-1", "bucket_name": "payroll-data"},
+        ),
+    ],
+)
 async def test_writes_and_destructive_operations_never_retry(name, arguments):
     class Broken:
         attempts = 0
@@ -143,8 +170,9 @@ async def test_timeout_is_bounded_and_read_retries_are_bounded():
 
     gateway = Slow()
     with pytest.raises(ToolExecutionError):
-        await ToolExecutor(create_registry(), gateway, timeout_seconds=0.005,
-                           read_retries=1).execute("aws.get_security_group", SG_ARGS)
+        await ToolExecutor(
+            create_registry(), gateway, timeout_seconds=0.005, read_retries=1
+        ).execute("aws.get_security_group", SG_ARGS)
     assert gateway.attempts == 2
 
 
@@ -184,4 +212,56 @@ async def test_nested_output_properties_are_closed():
             return result
 
     with pytest.raises(Invalid):
-        await ToolExecutor(create_registry(), ExtraNested()).execute("aws.get_security_group", SG_ARGS)
+        await ToolExecutor(create_registry(), ExtraNested()).execute(
+            "aws.get_security_group", SG_ARGS
+        )
+
+
+async def test_provider_conflict_message_is_never_exposed():
+    class ConflictGateway:
+        async def call(self, tool, arguments):
+            raise Conflict("provider secret token=DO-NOT-EXPOSE")
+
+    with pytest.raises(Conflict) as error:
+        await ToolExecutor(create_registry(), ConflictGateway()).execute(
+            "aws.modify_security_group", WRITE_ARGS
+        )
+    assert str(error.value) == "Resource revision conflict; investigate and submit a new proposal"
+
+
+async def test_policy_is_rechecked_after_waiting_for_concurrency_slot():
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockedGateway(InProcessMockGateway):
+        async def call(self, tool, arguments):
+            if tool.name == "aws.get_security_group":
+                started.set()
+                await release.wait()
+            return await super().call(tool, arguments)
+
+    revoked = False
+    checks = 0
+
+    def authorize():
+        nonlocal checks
+        checks += 1
+        if revoked:
+            raise Forbidden("Policy revoked before dispatch")
+
+    gateway = BlockedGateway()
+    executor = ToolExecutor(create_registry(), gateway, max_concurrency=1)
+    first = asyncio.create_task(executor.execute("aws.get_security_group", SG_ARGS))
+    await started.wait()
+    waiting = asyncio.create_task(
+        executor.execute("aws.modify_security_group", WRITE_ARGS, before_dispatch=authorize)
+    )
+    await asyncio.sleep(0)
+    assert checks == 0
+    revoked = True
+    release.set()
+    await first
+    with pytest.raises(Forbidden):
+        await waiting
+    assert checks == 1
+    assert [call[0] for call in gateway.calls] == ["aws.get_security_group"]

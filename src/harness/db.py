@@ -1,4 +1,3 @@
-
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -19,10 +18,12 @@ class Database:
                 kwargs["poolclass"] = StaticPool
         self.engine = create_engine(url, **kwargs)
         if url.startswith("sqlite"):
+
             @event.listens_for(self.engine, "connect")
             def sqlite_setup(connection, _):
                 connection.execute("PRAGMA foreign_keys=ON")
                 connection.execute("PRAGMA busy_timeout=30000")
+
         self.sessions: sessionmaker[Session] = sessionmaker(self.engine, expire_on_commit=False)
 
     def create_all(self):

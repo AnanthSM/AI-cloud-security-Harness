@@ -60,7 +60,8 @@ def test_skill_discovery_loads_arbitrary_complete_skill_directories(tmp_path):
     registry = SkillRegistry(tmp_path)
 
     assert {skill.id for skill in registry.list()} == {
-        "inspect-test-resource", "inspect-another-resource"
+        "inspect-test-resource",
+        "inspect-another-resource",
     }
     skill = registry.get("inspect-another-resource")
     assert skill.version == "2.0.1"
@@ -68,7 +69,8 @@ def test_skill_discovery_loads_arbitrary_complete_skill_directories(tmp_path):
     assert skill.required_knowledge == ["aws", "s3"]
     assert skill.instructions == "Inspect the resource using the authorized read tool.\n"
     assert {skill.id for skill in SkillLoader().load(tmp_path)} == {
-        "inspect-test-resource", "inspect-another-resource"
+        "inspect-test-resource",
+        "inspect-another-resource",
     }
 
 
@@ -85,7 +87,9 @@ def test_skill_lookup_returns_an_isolated_definition(tmp_path):
     assert original.instructions != returned.instructions
 
 
-@pytest.mark.parametrize("identifier", ["unknown-skill", "../secret", "inspect-test-resource/../../x"])
+@pytest.mark.parametrize(
+    "identifier", ["unknown-skill", "../secret", "inspect-test-resource/../../x"]
+)
 def test_unknown_skill_ids_do_not_resolve_paths(tmp_path, identifier):
     write_skill(tmp_path)
     with pytest.raises(NotFound, match="Skill not found"):
@@ -99,12 +103,15 @@ def test_skill_rejects_invalid_versions(tmp_path, version):
         SkillValidator().validate(path)
 
 
-@pytest.mark.parametrize("overrides", [
-    {"risk_level": "safe"},
-    {"tools": "aws.get_bucket"},
-    {"required_knowledge": {"aws": True}},
-    {"default_permissions": {"destructive": "allow"}},
-])
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"risk_level": "safe"},
+        {"tools": "aws.get_bucket"},
+        {"required_knowledge": {"aws": True}},
+        {"default_permissions": {"destructive": "allow"}},
+    ],
+)
 def test_skill_rejects_invalid_or_undeclared_metadata(tmp_path, overrides):
     path = write_skill(tmp_path, **overrides)
     with pytest.raises(ValidationError):
@@ -169,24 +176,30 @@ def test_duplicate_agent_ids_fail_instead_of_shadowing(tmp_path):
         AgentLoader(tmp_path)
 
 
-@pytest.mark.parametrize("permissions", [
-    {"read": "allow", "write": "allow", "destructive": "deny"},
-    {"read": "allow", "write": "approval_required", "destructive": "allow"},
-    {"read": "allow", "write": "approval_required", "destructive": "approval_required"},
-    {"read": "allow", "write": "approval_required", "destructive": "deny", "admin": True},
-])
+@pytest.mark.parametrize(
+    "permissions",
+    [
+        {"read": "allow", "write": "allow", "destructive": "deny"},
+        {"read": "allow", "write": "approval_required", "destructive": "allow"},
+        {"read": "allow", "write": "approval_required", "destructive": "approval_required"},
+        {"read": "allow", "write": "approval_required", "destructive": "deny", "admin": True},
+    ],
+)
 def test_agent_rejects_unsupported_permission_escalation(tmp_path, permissions):
     write_agent(tmp_path, default_permissions=permissions)
     with pytest.raises(ValidationError):
         AgentLoader(tmp_path)
 
 
-@pytest.mark.parametrize("overrides", [
-    {"version": "latest"},
-    {"version": "1.0"},
-    {"tool_groups": "*"},
-    {"skip_approval": True},
-])
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"version": "latest"},
+        {"version": "1.0"},
+        {"tool_groups": "*"},
+        {"skip_approval": True},
+    ],
+)
 def test_agent_rejects_invalid_schema_and_unknown_control_fields(tmp_path, overrides):
     write_agent(tmp_path, **overrides)
     with pytest.raises(ValidationError):

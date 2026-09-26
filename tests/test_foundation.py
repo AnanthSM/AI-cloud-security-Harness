@@ -29,8 +29,25 @@ def test_health():
 
 
 def test_tool_schema_is_closed_and_strict():
-    schema = {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"], "additionalProperties": False}
-    registry = ToolRegistry([ToolDefinition(name="aws.read", description="read", provider="aws", version="1.0.0", risk="READ", input_schema=schema, output_schema=schema)])
+    schema = {
+        "type": "object",
+        "properties": {"id": {"type": "string"}},
+        "required": ["id"],
+        "additionalProperties": False,
+    }
+    registry = ToolRegistry(
+        [
+            ToolDefinition(
+                name="aws.read",
+                description="read",
+                provider="aws",
+                version="1.0.0",
+                risk="READ",
+                input_schema=schema,
+                output_schema=schema,
+            )
+        ]
+    )
     assert registry.validate_input("aws.read", {"id": "x"}) == {"id": "x"}
     for value in [{"id": 1}, {"id": "x", "risk": "READ"}, {}]:
         with pytest.raises(Invalid):

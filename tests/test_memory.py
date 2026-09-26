@@ -32,11 +32,17 @@ def test_memory_is_bounded_and_sanitized(memory, monkeypatch):
     monkeypatch.setenv("HARNESS_REVIEWER_TOKEN", "reviewer-credential-example")
     session = memory.create("alice", "agent")
     memory.append(session, "alice", "agent", "user", "password=secret reviewer-credential-example")
-    memory.set_state(session, "alice", "agent", {"token": "hide", "text": "reviewer-credential-example"})
+    memory.append(
+        session, "alice", "agent", "tool", '{"authorization": "Bearer private-json-value"}'
+    )
+    memory.set_state(
+        session, "alice", "agent", {"token": "hide", "text": "reviewer-credential-example"}
+    )
     with memory.db.engine.connect() as conn:
         payload = conn.execute(text("SELECT payload FROM session_memory")).scalar()
         assert "password=secret" not in payload
         assert "reviewer-credential-example" not in payload
+        assert "private-json-value" not in payload
         assert '"token":"[REDACTED]"' in payload
     for _ in range(45):
         memory.append(session, "alice", "agent", "tool", "x" * 7000)

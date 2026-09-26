@@ -1,6 +1,6 @@
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import Field
@@ -24,12 +24,17 @@ class Rule(StrictModel):
     risks: list[Risk] = Field(min_length=1)
 
     def matches(self, user, agent, tool, environment, resource) -> bool:
-        values = {"users": user.user_id, "agents": agent.id, "tools": tool.name,
-                  "actions": tool.name.split(".", 1)[1], "environments": environment,
-                  "resources": resource}
+        values = {
+            "users": user.user_id,
+            "agents": agent.id,
+            "tools": tool.name,
+            "actions": tool.name.split(".", 1)[1],
+            "environments": environment,
+            "resources": resource,
+        }
         return tool.risk in self.risks and all(
-            any(fnmatchcase(value, p) for p in getattr(self, key))
-            for key, value in values.items())
+            any(fnmatchcase(value, p) for p in getattr(self, key)) for key, value in values.items()
+        )
 
 
 class Scope(StrictModel):
@@ -47,7 +52,7 @@ class RuleConfig(StrictModel):
 
 
 class ApprovalConfig(RuleConfig):
-    reviewer_roles: list[str] = ["reviewer"]
+    reviewer_roles: list[Literal["reviewer"]] = Field(default=["reviewer"], min_length=1, max_length=1)
 
 
 class PolicyEngine:
@@ -58,8 +63,10 @@ class PolicyEngine:
         self.reload()
 
     def reload(self):
-        raw = {p: yaml.safe_load((self.directory / p).read_text()) for p in
-               ["tool-access.yaml", "approvals.yaml", "environments.yaml"]}
+        raw = {
+            p: yaml.safe_load((self.directory / p).read_text())
+            for p in ["tool-access.yaml", "approvals.yaml", "environments.yaml"]
+        }
         access = RuleConfig.model_validate(raw["tool-access.yaml"])
         approvals = ApprovalConfig.model_validate(raw["approvals.yaml"])
         inventory = EnvironmentConfig.model_validate(raw["environments.yaml"])
@@ -89,17 +96,28 @@ class PolicyEngine:
                 parts.append(f"{key}={arguments[key]}")
         return environment, f"{tool.provider}:" + "/".join(parts)
 
-    def evaluate(self, *, user: Principal, agent: AgentDefinition, tool: ToolDefinition,
-                 arguments: dict[str, Any]) -> PolicyDecision:
+    def evaluate(
+        self,
+        *,
+        user: Principal,
+        agent: AgentDefinition,
+        tool: ToolDefinition,
+        arguments: dict[str, Any],
+    ) -> PolicyDecision:
         def deny(reason, policy):
             return PolicyDecision(decision=Decision.DENY, reason=reason, policy=policy)
+
         if user.role not in ("operator", "reviewer"):
             return deny("Principal is not an operator", "PRINCIPAL-DENY")
         if tool.group not in agent.tool_groups and tool.name not in agent.proposal_tools:
             return deny("Agent lacks this capability", "AGENT-LEAST-PRIVILEGE")
         if tool.risk == Risk.DESTRUCTIVE:
             return deny("Agent prohibits destructive operations", "AGENT-DESTRUCTIVE-DENY")
-        permission = agent.default_permissions.read if tool.risk == Risk.READ else agent.default_permissions.write
+        permission = (
+            agent.default_permissions.read
+            if tool.risk == Risk.READ
+            else agent.default_permissions.write
+        )
         if permission == "deny":
             return deny("Agent permission is denied", "AGENT-DENY")
         try:
@@ -112,6 +130,9 @@ class PolicyEngine:
         order = {Decision.ALLOW: 0, Decision.APPROVAL_REQUIRED: 1, Decision.DENY: 2}
         rule = max(matches, key=lambda r: order[r.decision])
         if rule.decision == Decision.ALLOW and tool.risk != Risk.READ:
-            return PolicyDecision(decision=Decision.APPROVAL_REQUIRED,
-                                  reason="Agent writes require human approval", policy="AGENT-WRITE-GATE")
+            return PolicyDecision(
+                decision=Decision.APPROVAL_REQUIRED,
+                reason="Agent writes require human approval",
+                policy="AGENT-WRITE-GATE",
+            )
         return PolicyDecision(decision=rule.decision, reason=rule.reason, policy=rule.id)

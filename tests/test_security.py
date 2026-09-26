@@ -43,46 +43,70 @@ def security_state(tmp_path):
 def tool(risk=Risk.READ, name="aws.get_security_group"):
     schema = {"type": "object", "properties": {}, "additionalProperties": False}
     return ToolDefinition(
-        name=name, description="Security group test tool", provider="aws", version="1.0.0",
-        risk=risk, input_schema=schema, output_schema=schema,
+        name=name,
+        description="Security group test tool",
+        provider="aws",
+        version="1.0.0",
+        risk=risk,
+        input_schema=schema,
+        output_schema=schema,
         resource_fields=["account_id", "security_group_id"],
     )
 
 
 def envelope():
     return ActionEnvelope(
-        session_id="session-001", user_id=OPERATOR.user_id, agent_id="cloud-security-agent",
-        agent_version="0.1.0", agent_digest="a" * 64,
-        tool="aws.modify_security_group", tool_version="1.0.0", tool_digest="b" * 64,
-        arguments={"account_id": "111111111111", "security_group_id": "sg-12345",
-                   "change": {"remove_rule": "0.0.0.0/0:22"}},
-        environment="production", resource="aws:account_id=111111111111/security_group_id=sg-12345",
-        risk=Risk.HIGH_RISK_WRITE, policy_revision="c" * 64,
-        proposed_action="Remove the public SSH ingress rule", trace_id="trace-001",
+        session_id="session-001",
+        user_id=OPERATOR.user_id,
+        agent_id="cloud-security-agent",
+        agent_version="0.1.0",
+        agent_digest="a" * 64,
+        tool="aws.modify_security_group",
+        tool_version="1.0.0",
+        tool_digest="b" * 64,
+        arguments={
+            "account_id": "111111111111",
+            "security_group_id": "sg-12345",
+            "change": {"remove_rule": "0.0.0.0/0:22"},
+        },
+        environment="production",
+        resource="aws:account_id=111111111111/security_group_id=sg-12345",
+        risk=Risk.HIGH_RISK_WRITE,
+        policy_revision="c" * 64,
+        proposed_action="Remove the public SSH ingress rule",
+        trace_id="trace-001",
     )
 
 
 def evaluate(directory, *, definition=None, arguments=None, agent=None, user=OPERATOR):
     return PolicyEngine(directory).evaluate(
-        user=user, agent=agent or AgentLoader(ROOT / "agents").get("cloud-security-agent"),
-        tool=definition or tool(), arguments=arguments if arguments is not None else {
-            "account_id": "111111111111", "security_group_id": "sg-12345"
-        },
+        user=user,
+        agent=agent or AgentLoader(ROOT / "agents").get("cloud-security-agent"),
+        tool=definition or tool(),
+        arguments=arguments
+        if arguments is not None
+        else {"account_id": "111111111111", "security_group_id": "sg-12345"},
     )
 
 
 def test_policy_read_allowed_and_production_write_requires_approval(policy_directory):
     assert evaluate(policy_directory).decision == Decision.ALLOW
-    result = evaluate(policy_directory, definition=tool(
-        Risk.HIGH_RISK_WRITE, "aws.modify_security_group"))
+    result = evaluate(
+        policy_directory, definition=tool(Risk.HIGH_RISK_WRITE, "aws.modify_security_group")
+    )
     assert result.decision == Decision.APPROVAL_REQUIRED
 
 
 def test_policy_deny_overrides_allow_independent_of_order(policy_directory):
     path = policy_directory / "tool-access.yaml"
     original = yaml.safe_load(path.read_text())
-    denial = {"id": "RESTRICTED-RESOURCE", "risks": ["READ"], "decision": "DENY",
-              "reason": "Restricted resource", "resources": ["*security_group_id=sg-12345"]}
+    denial = {
+        "id": "RESTRICTED-RESOURCE",
+        "risks": ["READ"],
+        "decision": "DENY",
+        "reason": "Restricted resource",
+        "resources": ["*security_group_id=sg-12345"],
+    }
     for rules in [original["rules"] + [denial], [denial] + original["rules"]]:
         path.write_text(yaml.safe_dump({"rules": rules}))
         result = evaluate(policy_directory)
@@ -98,11 +122,14 @@ def test_policy_no_matching_grant_denies(policy_directory):
     assert result.policy == "DEFAULT-DENY"
 
 
-@pytest.mark.parametrize("arguments", [
-    {"account_id": "999999999999", "security_group_id": "sg-12345"},
-    {"security_group_id": "sg-12345", "environment": "production"},
-    {"account_id": "111111111111"},
-])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"account_id": "999999999999", "security_group_id": "sg-12345"},
+        {"security_group_id": "sg-12345", "environment": "production"},
+        {"account_id": "111111111111"},
+    ],
+)
 def test_policy_unknown_or_incomplete_scope_denies(policy_directory, arguments):
     result = evaluate(policy_directory, arguments=arguments)
     assert result.decision == Decision.DENY
@@ -111,10 +138,16 @@ def test_policy_unknown_or_incomplete_scope_denies(policy_directory, arguments):
 
 def test_environment_is_resolved_from_inventory_not_model_content(policy_directory):
     policy = PolicyEngine(policy_directory)
-    environment, resource = policy.resolve_scope(tool(), {
-        "account_id": "111111111111", "security_group_id": "sg-12345",
-        "environment": "development", "risk": "READ", "approved": True,
-    })
+    environment, resource = policy.resolve_scope(
+        tool(),
+        {
+            "account_id": "111111111111",
+            "security_group_id": "sg-12345",
+            "environment": "development",
+            "risk": "READ",
+            "approved": True,
+        },
+    )
     assert environment == "production"
     assert resource == "aws:account_id=111111111111/security_group_id=sg-12345"
 
@@ -127,25 +160,46 @@ def test_agent_capability_and_permission_limits_override_policy_grants(policy_di
     agent.default_permissions.read = "deny"
     assert evaluate(policy_directory, agent=agent).policy == "AGENT-DENY"
     agent.default_permissions.write = "deny"
-    assert evaluate(policy_directory, agent=agent, definition=tool(
-        Risk.HIGH_RISK_WRITE, "aws.modify_security_group")).decision == Decision.DENY
+    assert (
+        evaluate(
+            policy_directory,
+            agent=agent,
+            definition=tool(Risk.HIGH_RISK_WRITE, "aws.modify_security_group"),
+        ).decision
+        == Decision.DENY
+    )
 
 
 def test_destructive_and_unauthorized_principal_always_denied(policy_directory):
     destructive = evaluate(policy_directory, definition=tool(Risk.DESTRUCTIVE, "aws.delete_bucket"))
     assert destructive.decision == Decision.DENY
     assert destructive.policy == "AGENT-DESTRUCTIVE-DENY"
-    assert evaluate(policy_directory, user=Principal(user_id="model", role="model")).decision == Decision.DENY
+    assert (
+        evaluate(policy_directory, user=Principal(user_id="model", role="model")).decision
+        == Decision.DENY
+    )
 
 
 def test_agent_write_gate_survives_an_allow_rule(policy_directory):
     for filename in ["tool-access.yaml", "approvals.yaml"]:
         (policy_directory / filename).write_text("rules: []\n")
-    (policy_directory / "tool-access.yaml").write_text(yaml.safe_dump({"rules": [{
-        "id": "WRITE-ALLOW", "risks": ["HIGH_RISK_WRITE"], "decision": "ALLOW",
-        "reason": "Agent gate must still apply",
-    }]}))
-    result = evaluate(policy_directory, definition=tool(Risk.HIGH_RISK_WRITE, "aws.modify_security_group"))
+    (policy_directory / "tool-access.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "rules": [
+                    {
+                        "id": "WRITE-ALLOW",
+                        "risks": ["HIGH_RISK_WRITE"],
+                        "decision": "ALLOW",
+                        "reason": "Agent gate must still apply",
+                    }
+                ]
+            }
+        )
+    )
+    result = evaluate(
+        policy_directory, definition=tool(Risk.HIGH_RISK_WRITE, "aws.modify_security_group")
+    )
     assert result.decision == Decision.APPROVAL_REQUIRED
     assert result.policy == "AGENT-WRITE-GATE"
 
@@ -281,7 +335,9 @@ def test_concurrent_claims_allow_exactly_one_execution(security_state):
     def claim_once(_):
         barrier.wait(timeout=10)
         try:
-            action = approvals.claim(created["id"], REVIEWER, created["payload_hash"], lambda _: None)
+            action = approvals.claim(
+                created["id"], REVIEWER, created["payload_hash"], lambda _: None
+            )
             return action.model_dump(mode="json")
         except Conflict:
             return None
@@ -300,8 +356,10 @@ def test_database_blocks_approval_payload_and_expiry_mutation(security_state):
     for field in ["payload", "payload_hash", "reason", "expires_at", "created_at"]:
         with pytest.raises(IntegrityError, match="immutable"):
             with database.engine.begin() as connection:
-                connection.execute(text(f"UPDATE approvals SET {field} = :value WHERE id = :id"),
-                                   {"value": "tampered", "id": created["id"]})
+                connection.execute(
+                    text(f"UPDATE approvals SET {field} = :value WHERE id = :id"),
+                    {"value": "tampered", "id": created["id"]},
+                )
     assert approvals.get(created["id"])["payload_hash"] == created["payload_hash"]
 
 
@@ -331,8 +389,11 @@ def test_audit_rejects_orm_mutation_and_deletion(security_state):
 def test_audit_redacts_nested_parameters_and_inline_secrets(security_state):
     database, audit, _ = security_state
     secret = "highly-sensitive-value"
-    data = {"items": [{"client_secret": secret, "nested": {"api_key": secret}}],
-            "message": f"Failed with Bearer {secret}", "safe": "sg-12345"}
+    data = {
+        "items": [{"client_secret": secret, "nested": {"api_key": secret}}],
+        "message": f"Failed with Bearer {secret}",
+        "safe": "sg-12345",
+    }
     cleaned = redact(data)
     assert secret not in canonical(cleaned)
     assert cleaned["safe"] == "sg-12345"
@@ -341,16 +402,21 @@ def test_audit_redacts_nested_parameters_and_inline_secrets(security_state):
         assert secret not in unit.scalar(select(AuditRow.payload))
 
 
-@pytest.mark.parametrize("pem", [
-    "-----BEGIN PRIVATE KEY-----\nSENSITIVEKEYBODY\n-----END PRIVATE KEY-----",
-    "-----BEGIN RSA PRIVATE KEY-----\nSENSITIVEKEYBODY\n-----END RSA PRIVATE KEY-----",
-    "-----BEGIN PRIVATE KEY-----\nSENSITIVEKEYBODY",
-])
+@pytest.mark.parametrize(
+    "pem",
+    [
+        "-----BEGIN PRIVATE KEY-----\nSENSITIVEKEYBODY\n-----END PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----\nSENSITIVEKEYBODY\n-----END RSA PRIVATE KEY-----",
+        "-----BEGIN PRIVATE KEY-----\nSENSITIVEKEYBODY",
+    ],
+)
 def test_private_key_redaction_removes_the_entire_key_material(pem):
     assert "SENSITIVEKEYBODY" not in redact({"message": pem})["message"]
 
 
-def test_audit_redacts_configured_harness_credentials_even_without_labels(security_state, monkeypatch):
+def test_audit_redacts_configured_harness_credentials_even_without_labels(
+    security_state, monkeypatch
+):
     database, audit, _ = security_state
     secret = "unlabelled-sensitive-reviewer-value"
     monkeypatch.setenv("HARNESS_REVIEWER_TOKEN", secret)

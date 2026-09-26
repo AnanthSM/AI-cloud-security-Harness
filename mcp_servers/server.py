@@ -1,4 +1,5 @@
 """Credential-free provider MCP servers with exact catalog schemas."""
+
 import asyncio
 import os
 
@@ -18,9 +19,16 @@ def create_server(provider: str) -> Server:
 
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
-        return [types.Tool(name=tool.name, description=tool.description,
-                           inputSchema=tool.input_schema, outputSchema=tool.output_schema)
-                for tool in registry.list() if tool.provider == provider]
+        return [
+            types.Tool(
+                name=tool.name,
+                description=tool.description,
+                inputSchema=tool.input_schema,
+                outputSchema=tool.output_schema,
+            )
+            for tool in registry.list()
+            if tool.provider == provider
+        ]
 
     @server.call_tool(validate_input=False)
     async def call_tool(name: str, arguments: dict) -> dict | types.CallToolResult:
@@ -32,8 +40,15 @@ def create_server(provider: str) -> Server:
             result = await gateway.call(tool, args)
             return registry.validate_output(name, result)
         except HarnessError:
-            return types.CallToolResult(isError=True, content=[types.TextContent(
-                type="text", text="Mock tool request rejected; validate arguments and resource revision")])
+            return types.CallToolResult(
+                isError=True,
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text="Mock tool request rejected; validate arguments and resource revision",
+                    )
+                ],
+            )
 
     return server
 

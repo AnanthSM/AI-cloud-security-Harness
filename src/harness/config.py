@@ -27,7 +27,11 @@ class Settings(StrictModel):
         data = yaml.safe_load((root / "config/harness.yaml").read_text())
         state = root / ".state"
         state.mkdir(mode=0o700, exist_ok=True)
-        return cls(root=root, database_url=os.environ.get(
-            "HARNESS_DATABASE_URL", f"sqlite:///{state / 'harness.db'}"),
+        return cls(
+            root=root,
+            database_url=os.environ.get(
+                "HARNESS_DATABASE_URL", f"sqlite:///{state / 'harness.db'}"
+            ),
             trace_console=os.environ.get("HARNESS_TRACE_CONSOLE", "true").lower() == "true",
-            **data)
+            **data,
+        )

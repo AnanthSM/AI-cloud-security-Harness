@@ -12,3 +12,7 @@ htmlcov/
 *.db
 dist/
 build/
+
+# Generated local knowledge versions may include private investigation notes.
+knowledge/candidates/*.md
+knowledge/approved/*.md

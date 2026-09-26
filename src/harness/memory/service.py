@@ -1,6 +1,8 @@
 """Bounded, expiring task state. No path from memory into trusted knowledge."""
+
 import json
 import os
+import re
 from datetime import timedelta
 from typing import Any
 from uuid import uuid4
@@ -13,6 +15,10 @@ from harness.db import Base, Database
 from harness.errors import Invalid, NotFound
 from harness.util import canonical, utcnow
 
+QUOTED_SECRET = re.compile(
+    r"""(?i)["'](?:password|secret|token|authorization|credential|api[_-]?key|private[_-]?key)["']\s*:\s*(?:"[^"\n]*"|'[^'\n]*'|[^\s,;}]+)"""
+)
+
 
 def sanitize(value: Any) -> Any:
     """Defense in depth for accidental secrets; known local credentials are also scrubbed."""
@@ -22,6 +28,7 @@ def sanitize(value: Any) -> Any:
     if isinstance(value, list):
         return [sanitize(v) for v in value]
     if isinstance(value, str):
+        value = QUOTED_SECRET.sub("[REDACTED]", value)
         for name, secret in os.environ.items():
             if name.startswith("HARNESS_") and ("TOKEN" in name or "SECRET" in name) and secret:
                 value = value.replace(secret, "[REDACTED]")
@@ -55,10 +62,15 @@ class SessionMemory:
         if not user_id or not agent_id:
             raise Invalid("Session owner and agent are required")
         now = utcnow()
-        row = SessionRow(id="SES-" + uuid4().hex, user_id=user_id, agent_id=agent_id,
-                         created_at=now.isoformat(),
-                         expires_at=(now + timedelta(seconds=self.ttl_seconds)).isoformat(),
-                         payload=canonical({"messages": [], "state": {}}), revision=1)
+        row = SessionRow(
+            id="SES-" + uuid4().hex,
+            user_id=user_id,
+            agent_id=agent_id,
+            created_at=now.isoformat(),
+            expires_at=(now + timedelta(seconds=self.ttl_seconds)).isoformat(),
+            payload=canonical({"messages": [], "state": {}}),
+            revision=1,
+        )
         with self.db.sessions.begin() as unit:
             unit.execute(delete(SessionRow).where(SessionRow.expires_at <= now.isoformat()))
             unit.add(row)
@@ -66,8 +78,12 @@ class SessionMemory:
 
     def _row(self, unit, session_id, user_id, agent_id):
         row = unit.get(SessionRow, session_id)
-        if (row is None or row.user_id != user_id or row.agent_id != agent_id
-                or row.expires_at <= utcnow().isoformat()):
+        if (
+            row is None
+            or row.user_id != user_id
+            or row.agent_id != agent_id
+            or row.expires_at <= utcnow().isoformat()
+        ):
             raise NotFound("Session not found or expired")
         return row
 
@@ -75,26 +91,35 @@ class SessionMemory:
         with self.db.sessions() as unit:
             row = self._row(unit, session_id, user_id, agent_id)
             data = sanitize(json.loads(row.payload))
-            return {"id": row.id, "session_id": row.id, "user_id": row.user_id,
-                    "agent_id": row.agent_id, "created_at": row.created_at,
-                    "expires_at": row.expires_at, **data,
-                    "last_resource": data["state"].get("last_resource")}
+            return {
+                "id": row.id,
+                "session_id": row.id,
+                "user_id": row.user_id,
+                "agent_id": row.agent_id,
+                "created_at": row.created_at,
+                "expires_at": row.expires_at,
+                **data,
+                "last_resource": data["state"].get("last_resource"),
+            }
 
-    def append(self, session_id: str, user_id: str, agent_id: str,
-               role: str, content: Any) -> dict:
+    def append(self, session_id: str, user_id: str, agent_id: str, role: str, content: Any) -> dict:
         if role not in {"user", "assistant", "tool"}:
             raise Invalid("Memory accepts user, assistant, and tool data only")
         content = sanitize(content)
         if not isinstance(content, str):
             content = canonical(content)
-        message = {"role": role, "content": content[:self.MAX_MESSAGE_CHARS],
-                   "timestamp": utcnow().isoformat(), "trusted": False}
+        message = {
+            "role": role,
+            "content": content[: self.MAX_MESSAGE_CHARS],
+            "timestamp": utcnow().isoformat(),
+            "trusted": False,
+        }
         with self.db.sessions() as unit:
             if self.db.engine.dialect.name == "sqlite":
                 unit.execute(text("BEGIN IMMEDIATE"))
             row = self._row(unit, session_id, user_id, agent_id)
             data = json.loads(row.payload)
-            data["messages"] = (data["messages"] + [message])[-self.MAX_MESSAGES:]
+            data["messages"] = (data["messages"] + [message])[-self.MAX_MESSAGES :]
             while len(canonical(data)) > self.MAX_MEMORY_CHARS and len(data["messages"]) > 1:
                 data["messages"].pop(0)
             row.payload = canonical(data)
@@ -102,8 +127,14 @@ class SessionMemory:
             unit.commit()
         return self.get(session_id, user_id, agent_id)
 
-    def set_state(self, session_id: str, user_id: str, agent_id: str,
-                  state: dict | None = None, **updates: Any) -> dict:
+    def set_state(
+        self,
+        session_id: str,
+        user_id: str,
+        agent_id: str,
+        state: dict | None = None,
+        **updates: Any,
+    ) -> dict:
         incoming = sanitize({**(state or {}), **updates})
         with self.db.sessions() as unit:
             if self.db.engine.dialect.name == "sqlite":
@@ -125,5 +156,6 @@ class SessionMemory:
 
     def purge_expired(self) -> int:
         with self.db.sessions.begin() as unit:
-            return unit.execute(delete(SessionRow).where(
-                SessionRow.expires_at <= utcnow().isoformat())).rowcount
+            return unit.execute(
+                delete(SessionRow).where(SessionRow.expires_at <= utcnow().isoformat())
+            ).rowcount

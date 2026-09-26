@@ -11,13 +11,19 @@ from harness.db import Base, Database
 from harness.schemas import StrictModel
 from harness.util import canonical, digest, utcnow
 
-SECRET_KEYS = re.compile(r"password|secret|token|authorization|credential|api.?key|private.?key", re.I)
-SECRET_TEXT = re.compile(r"(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)|bearer\s+\S+|(?:password|secret|token|api[_-]?key)\s*[:=]\s*[^\s,;]+|AKIA[A-Z0-9]{16})")
+SECRET_KEYS = re.compile(
+    r"password|secret|token|authorization|credential|api.?key|private.?key", re.I
+)
+SECRET_TEXT = re.compile(
+    r"(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)|bearer\s+\S+|(?:password|secret|token|api[_-]?key)\s*[:=]\s*[^\s,;]+|AKIA[A-Z0-9]{16})"
+)
 
 
 def redact(value: Any) -> Any:
     if isinstance(value, dict):
-        return {k: "[REDACTED]" if SECRET_KEYS.search(str(k)) else redact(v) for k, v in value.items()}
+        return {
+            k: "[REDACTED]" if SECRET_KEYS.search(str(k)) else redact(v) for k, v in value.items()
+        }
     if isinstance(value, list):
         return [redact(v) for v in value]
     if isinstance(value, str):
@@ -71,7 +77,11 @@ class AuditLog:
         if self.db.engine.dialect.name == "sqlite":
             with self.db.engine.begin() as conn:
                 for action in ["UPDATE", "DELETE"]:
-                    conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS audit_no_{action.lower()} BEFORE {action} ON audit_events BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END"))
+                    conn.execute(
+                        text(
+                            f"CREATE TRIGGER IF NOT EXISTS audit_no_{action.lower()} BEFORE {action} ON audit_events BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END"
+                        )
+                    )
 
     def record(self, event: AuditEvent, session: Session | None = None) -> None:
         if session is not None:
@@ -92,25 +102,40 @@ class AuditLog:
         previous = unit.scalar(select(AuditRow).order_by(AuditRow.sequence.desc()).limit(1))
         previous_hash = previous.event_hash if previous else "0" * 64
         payload = canonical(redact(event.model_dump()))
-        unit.add(AuditRow(payload=payload, previous_hash=previous_hash,
-                          event_hash=digest({"previous": previous_hash, "payload": payload})))
+        unit.add(
+            AuditRow(
+                payload=payload,
+                previous_hash=previous_hash,
+                event_hash=digest({"previous": previous_hash, "payload": payload}),
+            )
+        )
         unit.flush()
 
     def list(self, limit: int = 100, session_id: str | None = None) -> list[dict]:
         import json
+
         with self.db.sessions() as unit:
             rows = unit.scalars(select(AuditRow).order_by(AuditRow.sequence)).all()
-            items = [{"sequence": r.sequence, **json.loads(r.payload),
-                      "previous_hash": r.previous_hash, "event_hash": r.event_hash} for r in rows]
+            items = [
+                {
+                    "sequence": r.sequence,
+                    **json.loads(r.payload),
+                    "previous_hash": r.previous_hash,
+                    "event_hash": r.event_hash,
+                }
+                for r in rows
+            ]
         if session_id:
             items = [i for i in items if i["session_id"] == session_id]
-        return items[-min(max(limit, 1), 1000):]
+        return items[-min(max(limit, 1), 1000) :]
 
     def verify(self) -> bool:
         previous = "0" * 64
         with self.db.sessions() as unit:
             for row in unit.scalars(select(AuditRow).order_by(AuditRow.sequence)):
-                if row.previous_hash != previous or row.event_hash != digest({"previous": previous, "payload": row.payload}):
+                if row.previous_hash != previous or row.event_hash != digest(
+                    {"previous": previous, "payload": row.payload}
+                ):
                     return False
                 previous = row.event_hash
         return True

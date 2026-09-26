@@ -28,6 +28,7 @@ class AgentDefinition(StrictModel):
 
 class AgentLoader:
     def __init__(self, directory: Path):
+        self.directory = directory
         self.agents: dict[str, AgentDefinition] = {}
         for path in sorted(directory.glob("*.yaml")):
             agent = AgentDefinition.model_validate(yaml.safe_load(path.read_text()))

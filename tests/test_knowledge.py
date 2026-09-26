@@ -20,14 +20,24 @@ def store(tmp_path):
 
 
 def propose(store, **kwargs):
-    return store.propose(title="Public SSH", statement="Inspect public SSH rules before remediation.",
-                         scope={"provider": "aws"}, sources=[{"type": "incident", "reference": "INC-42"}],
-                         tags=["ssh"], user_id="alice", **kwargs)
+    return store.propose(
+        title="Public SSH",
+        statement="Inspect public SSH rules before remediation.",
+        scope={"provider": "aws"},
+        sources=[{"type": "incident", "reference": "INC-42"}],
+        tags=["ssh"],
+        user_id="alice",
+        **kwargs,
+    )
 
 
 def approve(store, entry):
-    return store.promote(entry["id"], entry["version"], entry["payload_hash"],
-                         Principal(user_id="reviewer", role="reviewer"))
+    return store.promote(
+        entry["id"],
+        entry["version"],
+        entry["payload_hash"],
+        Principal(user_id="reviewer", role="reviewer"),
+    )
 
 
 def test_candidate_exclusion_review_and_history(store):
@@ -51,7 +61,9 @@ def test_review_requires_role_and_exact_revision(store):
         store.promote(candidate["id"], 1, candidate["payload_hash"], Principal(user_id="alice"))
     with pytest.raises(Conflict):
         store.promote(candidate["id"], 1, "wrong", Principal(user_id="human", role="reviewer"))
-    updated = store.modify(candidate["id"], 1, {"statement": "Require evidence before changing SSH."})
+    updated = store.modify(
+        candidate["id"], 1, {"statement": "Require evidence before changing SSH."}
+    )
     with pytest.raises(Conflict):
         approve(store, candidate)
     assert approve(store, updated)["statement"] == updated["statement"]
@@ -62,7 +74,9 @@ def test_review_requires_role_and_exact_revision(store):
 def test_reviewed_updates_keep_old_trusted_version_until_review(store):
     first = approve(store, propose(store))
     second = propose(store, target_id=first["id"])
-    modified = store.modify(second["id"], second["version"], {"statement": "SSH requires owner review."})
+    modified = store.modify(
+        second["id"], second["version"], {"statement": "SSH requires owner review."}
+    )
     assert store.retrieve("SSH")[0]["version"] == first["version"]
     approved = approve(store, modified)
     assert store.retrieve("SSH")[0]["version"] == approved["version"]
@@ -84,7 +98,11 @@ def test_evidence_and_secret_rejection(store, monkeypatch):
     with pytest.raises(Invalid):
         store.propose("x", "SSH", {}, [], [], "alice")
     monkeypatch.setenv("HARNESS_OPERATOR_TOKEN", "confidential-operator-credential")
-    for statement in ["password=verysecret", "confidential-operator-credential"]:
+    for statement in [
+        "password=verysecret",
+        "confidential-operator-credential",
+        '{"token": "secret-json-value"}',
+    ]:
         with pytest.raises(Invalid):
             store.propose("x", statement, {}, [{"type": "incident", "reference": "x"}], [], "alice")
     assert store.list_candidates() == []
@@ -125,7 +143,11 @@ def test_imported_scenario_requires_full_review_provenance(store):
     assert docs[0]["source"] == "knowledge/scenarios"
     assert docs[0]["trusted"]
     assert store.import_documents() == 0
-    path.write_text(fixture.read_text().replace("reviewed_by: repository-fixture-maintainer", "reviewed_by: null"))
+    path.write_text(
+        fixture.read_text().replace(
+            "reviewed_by: repository-fixture-maintainer", "reviewed_by: null"
+        )
+    )
     with pytest.raises(Invalid):
         store.import_documents()
 
@@ -133,7 +155,9 @@ def test_imported_scenario_requires_full_review_provenance(store):
 def test_import_rejects_silent_existing_version_edits(store):
     candidate = propose(store)
     path = store.export(candidate)
-    path.write_text(path.read_text().replace("Inspect public SSH", "Automatically remove public SSH"))
+    path.write_text(
+        path.read_text().replace("Inspect public SSH", "Automatically remove public SSH")
+    )
     with pytest.raises(Conflict):
         store.import_documents()
     assert store.get_candidate(candidate["id"])["statement"].startswith("Inspect")
