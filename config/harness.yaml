@@ -1,0 +1,9 @@
+context_max_chars: 24000
+max_steps: 8
+session_ttl_seconds: 86400
+approval_ttl_seconds: 900
+tool_timeout_seconds: 10
+read_retries: 2
+max_concurrency: 4
+requests_per_minute: 120
+transport: inprocess_mock

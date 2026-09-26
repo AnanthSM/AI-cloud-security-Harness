@@ -1,0 +1,16 @@
+id: cloud-security-agent
+name: Cloud Security Agent
+version: 0.1.0
+description: Investigates cloud security using governed tools and reviewed knowledge.
+skills: []
+knowledge_sources:
+  - knowledge/approved
+  - knowledge/scenarios
+  - knowledge/policies
+tool_groups: [aws.read, azure.read, gitlab.read]
+# These are proposals only, never execution permission.
+proposal_tools: [aws.modify_security_group, gitlab.create_issue, aws.delete_bucket]
+default_permissions:
+  read: allow
+  write: approval_required
+  destructive: deny
